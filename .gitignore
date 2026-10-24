@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Large zip archives (exceed GitHub 100MB limit)
+*.zip
+Training datasets.zip
+Testing datasets.zip
+
+# Heavy original H5 training model (browser uses web model in public/model/weights.bin)
+blood_cell_classifier.h5
+
+# Local temporary/scratch files
+scratch/
+*.log
+.DS_Store
+Thumbs.db

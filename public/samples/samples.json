@@ -1,0 +1,125 @@
+{
+  "Basophil": {
+    "class_name": "Basophil",
+    "count": 8,
+    "files": [
+      "/static/samples/Basophil/BA_24200302.jpg",
+      "/static/samples/Basophil/BA_909453.jpg",
+      "/static/samples/Basophil/BA_910152.jpg",
+      "/static/samples/Basophil/BA_911725.jpg",
+      "/static/samples/Basophil/BA_911932.jpg",
+      "/static/samples/Basophil/BA_912566.jpg",
+      "/static/samples/Basophil/BA_913408.jpg",
+      "/static/samples/Basophil/BA_914096.jpg"
+    ],
+    "info": {
+      "name": "Basophil",
+      "type": "Granulocyte",
+      "normal_range": "0.5 - 1.0%",
+      "diameter": "10 - 14 \u00b5m",
+      "nucleus": "Bi-lobed or S-shaped, often obscured by prominent coarse granules",
+      "granules": "Large, coarse, variable dark blue-black/purple granules (water soluble)",
+      "function": "Mediates allergic response, releases histamine and heparin, parasitic defense",
+      "clinical_alerts": "Basophilia observed in chronic myeloid leukemia (CML), polycythemia vera, chronic hypersensitivity."
+    }
+  },
+  "Eosinophil": {
+    "class_name": "Eosinophil",
+    "count": 8,
+    "files": [
+      "/static/samples/Eosinophil/EO_15074093.jpg",
+      "/static/samples/Eosinophil/EO_16249708.jpg",
+      "/static/samples/Eosinophil/EO_16282477.jpg",
+      "/static/samples/Eosinophil/EO_23089841.jpg",
+      "/static/samples/Eosinophil/EO_23466371.jpg",
+      "/static/samples/Eosinophil/EO_23944298.jpg",
+      "/static/samples/Eosinophil/EO_968484.jpg",
+      "/static/samples/Eosinophil/EO_969018.jpg"
+    ],
+    "info": {
+      "name": "Eosinophil",
+      "type": "Granulocyte",
+      "normal_range": "1.0 - 4.0%",
+      "diameter": "12 - 17 \u00b5m",
+      "nucleus": "Distinctly bilobed (spectacle-shaped), dark purple chromatin",
+      "granules": "Abundant, uniform, spheroidal bright reddish-orange granules packed tightly",
+      "function": "Major defense against helminthic parasites, modulates IgE-mediated allergic reactions",
+      "clinical_alerts": "Eosinophilia seen in allergic conditions (asthma, eczema), parasitic infections, drug reactions, eosinophilic leukemia."
+    }
+  },
+  "Lymphocytes": {
+    "class_name": "Lymphocytes",
+    "count": 8,
+    "files": [
+      "/static/samples/Lymphocytes/LY_14026515.jpg",
+      "/static/samples/Lymphocytes/LY_909959.jpg",
+      "/static/samples/Lymphocytes/LY_911324.jpg",
+      "/static/samples/Lymphocytes/LY_912598.jpg",
+      "/static/samples/Lymphocytes/LY_914453.jpg",
+      "/static/samples/Lymphocytes/LY_914594.jpg",
+      "/static/samples/Lymphocytes/LY_914653.jpg",
+      "/static/samples/Lymphocytes/LY_915675.jpg"
+    ],
+    "info": {}
+  },
+  "Metamyelocytes": {
+    "class_name": "Metamyelocytes",
+    "count": 8,
+    "files": [
+      "/static/samples/Metamyelocytes/IG_864662.jpg",
+      "/static/samples/Metamyelocytes/IG_886201.jpg",
+      "/static/samples/Metamyelocytes/IG_923361.jpg",
+      "/static/samples/Metamyelocytes/IG_946200.jpg",
+      "/static/samples/Metamyelocytes/IG_965044.jpg",
+      "/static/samples/Metamyelocytes/MMY_10688.jpg",
+      "/static/samples/Metamyelocytes/MMY_1144.jpg",
+      "/static/samples/Metamyelocytes/MMY_11810.jpg"
+    ],
+    "info": {}
+  },
+  "Monocytes": {
+    "class_name": "Monocytes",
+    "count": 8,
+    "files": [
+      "/static/samples/Monocytes/MO_915714.jpg",
+      "/static/samples/Monocytes/MO_917349.jpg",
+      "/static/samples/Monocytes/MO_918252.jpg",
+      "/static/samples/Monocytes/MO_918998.jpg",
+      "/static/samples/Monocytes/MO_919303.jpg",
+      "/static/samples/Monocytes/MO_919757.jpg",
+      "/static/samples/Monocytes/MO_919860.jpg",
+      "/static/samples/Monocytes/MO_920985.jpg"
+    ],
+    "info": {}
+  },
+  "Myelocytes": {
+    "class_name": "Myelocytes",
+    "count": 8,
+    "files": [
+      "/static/samples/Myelocytes/PMY_841428.jpg",
+      "/static/samples/Myelocytes/PMY_844933.jpg",
+      "/static/samples/Myelocytes/PMY_845030.jpg",
+      "/static/samples/Myelocytes/PMY_845780.jpg",
+      "/static/samples/Myelocytes/PMY_847546.jpg",
+      "/static/samples/Myelocytes/PMY_848534.jpg",
+      "/static/samples/Myelocytes/PMY_848990.jpg",
+      "/static/samples/Myelocytes/PMY_849659.jpg"
+    ],
+    "info": {}
+  },
+  "Neutrophils": {
+    "class_name": "Neutrophils",
+    "count": 8,
+    "files": [
+      "/static/samples/Neutrophils/SNE_937806.jpg",
+      "/static/samples/Neutrophils/SNE_938139.jpg",
+      "/static/samples/Neutrophils/SNE_938584.jpg",
+      "/static/samples/Neutrophils/SNE_938727.jpg",
+      "/static/samples/Neutrophils/SNE_939093.jpg",
+      "/static/samples/Neutrophils/SNE_939200.jpg",
+      "/static/samples/Neutrophils/SNE_940402.jpg",
+      "/static/samples/Neutrophils/SNE_940807.jpg"
+    ],
+    "info": {}
+  }
+}

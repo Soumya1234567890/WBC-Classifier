@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>White Blood Cell Differential Classifier | Explainable Hematology AI</title>
+  <meta name="description" content="Deep learning white blood cell differential classification with Grad-CAM visual explainability, morphological feature attribution, and interactive 100-cell laboratory counter.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <!-- TensorFlow.js for Client-Side Vercel Browser Inference -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+</head>
+<body>
+
+  <div class="app-wrapper">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-icon">
+          <!-- Blood cell microscope icon -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 7v10M7 12h10" stroke="#fff" stroke-linecap="round"/>
+            <circle cx="9" cy="9" r="1.5" fill="#fff"/>
+            <circle cx="15" cy="15" r="1.5" fill="#fff"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">White Blood Cell Differential Classifier</h1>
+          <div class="brand-subtitle">
+            <span class="status-badge"><span class="pulse-dot"></span> Vercel Compatible • 7 Differential Classes</span>
+            <span>Grad-CAM Visual Attention Engine</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btnOpenAtlas" class="btn-secondary" title="View WBC Morphological Reference Guide">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+          WBC Atlas & Guide
+        </button>
+
+        <button id="btnOpenModelInfo" class="btn-secondary" title="Inspect CNN Architecture & Parameters">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+            <line x1="6" y1="6" x2="6.01" y2="6"/>
+            <line x1="6" y1="18" x2="6.01" y2="18"/>
+          </svg>
+          Model Specs
+        </button>
+
+        <button id="btnPrintReport" class="btn-primary" title="Export Diagnostic PDF Report">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9V2h12v7"/>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+            <path d="M6 14h12v8H6z"/>
+          </svg>
+          Print / PDF Report
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="main-grid">
+
+      <!-- LEFT COLUMN: Input, Test Gallery & 100-Cell Counter -->
+      <aside class="left-column">
+
+        <!-- Image Upload / Dropzone -->
+        <div class="glass-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              Input Microscopic Image
+            </h2>
+          </div>
+
+          <div id="dropzone" class="dropzone">
+            <div class="dropzone-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+            </div>
+            <div class="dropzone-title">Click or drag blood smear image</div>
+            <div class="dropzone-desc">Supports JPG, PNG (128×128 auto-rescaled) or Paste (Ctrl+V)</div>
+            <input type="file" id="fileInput" class="file-input" accept="image/*">
+          </div>
+        </div>
+
+        <!-- Preloaded Test Dataset Samples -->
+        <div class="glass-panel">
+          <div class="gallery-header">
+            <h2 class="panel-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/>
+                <rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/>
+              </svg>
+              Test Dataset Samples
+            </h2>
+          </div>
+
+          <!-- Category filter tabs -->
+          <div id="galleryTabs" class="gallery-tabs"></div>
+
+          <!-- Sample cards grid -->
+          <div id="galleryGrid" class="gallery-grid"></div>
+        </div>
+
+        <!-- 100-Cell Differential Counter -->
+        <div class="glass-panel counter-box">
+          <div class="panel-header">
+            <h2 class="panel-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+              </svg>
+              100-Cell Differential Counter
+            </h2>
+          </div>
+
+          <div class="counter-progress-header">
+            <span style="color: var(--text-muted);">Lab Target Progress:</span>
+            <span id="diffCountProgress" style="font-family: var(--font-mono); font-weight: 700; color: var(--accent-cyan);">0 / 100 Cells (0%)</span>
+          </div>
+
+          <div class="progress-bar-container">
+            <div id="diffProgressBar" class="progress-bar-fill"></div>
+          </div>
+
+          <div id="counterItems" class="counter-grid"></div>
+
+          <div id="diffClinicalAlerts" class="feature-callout" style="display: none; margin-top: 12px; background: rgba(245, 158, 11, 0.1); border-color: var(--accent-amber); color: #fde68a;"></div>
+
+          <div class="counter-actions">
+            <button id="btnAddCurrent" class="btn-primary" style="flex: 1;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+              Add Classified Cell (+)
+            </button>
+            <button id="btnResetDiff" class="btn-secondary" title="Reset Tally">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                <path d="M8 16H3v5"/>
+              </svg>
+              Reset
+            </button>
+          </div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 8px; text-align: center;">
+            Tip: Use keyboard numbers <span class="counter-key">1</span> to <span class="counter-key">7</span> or <span class="counter-key">+</span> for rapid bench tallying!
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- RIGHT COLUMN: Classification Result & Explainability Hub -->
+      <section class="right-column">
+
+        <!-- Top Hero Result Banner -->
+        <div class="glass-panel classification-hero">
+          <div class="classification-info">
+            <div class="classification-label">Differential Classification</div>
+            <div class="prediction-title">
+              <span id="predictionName">Analyzing...</span>
+              <span id="cellTypeTag" class="cell-type-tag">Granulocyte</span>
+            </div>
+            <div class="prediction-meta">
+              <div class="meta-item">
+                <span style="color: var(--text-muted);">Normal Peripheral Range:</span>
+                <strong id="normalRangeMeta" style="color: #fff;">1.0 - 4.0%</strong>
+              </div>
+              <div class="meta-item">
+                <span style="color: var(--text-muted);">Typical Diameter:</span>
+                <strong id="diameterMeta" style="color: #fff;">12 - 17 µm</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="confidence-meter">
+            <div class="stat-chip-label">Diagnostic Confidence</div>
+            <div id="confidenceVal" class="confidence-val">--%</div>
+            <span id="confidenceBadge" class="confidence-badge high">High Confidence</span>
+          </div>
+        </div>
+
+        <!-- Left Shift Emergency Banner -->
+        <div id="clinicalAlertBanner" class="clinical-alert-banner">
+          <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div>
+            <strong>PATHOLOGICAL ALERT:</strong> <span id="alertText">Left-Shift detected in peripheral blood.</span>
+          </div>
+        </div>
+
+        <!-- Explainability Hub: Visual Grad-CAM & Morphological Attribution -->
+        <div class="explain-hub">
+
+          <!-- Left: Grad-CAM Visual Heatmap Viewer -->
+          <div class="glass-panel image-viewer-card">
+            <div class="panel-header">
+              <h2 class="panel-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                  <polyline points="2 17 12 22 22 17"/>
+                  <polyline points="2 12 12 17 22 12"/>
+                </svg>
+                Grad-CAM Activation Map
+              </h2>
+              <div class="view-mode-buttons">
+                <button class="btn-mode active" data-mode="overlay">Overlay</button>
+                <button class="btn-mode" data-mode="heatmap">Heatmap</button>
+                <button class="btn-mode" data-mode="original">Original</button>
+              </div>
+            </div>
+
+            <!-- Canvas View Area -->
+            <div class="viewer-canvas-wrap">
+              <img id="originalLayer" alt="Original blood cell smear">
+              <img id="heatmapLayer" class="heatmap-layer" alt="Grad-CAM activation heatmap">
+              <div id="focusBox" class="focus-bounding-box"></div>
+            </div>
+
+            <!-- Controls: Opacity Slider & Colormap -->
+            <div class="viewer-controls">
+              <div class="control-row">
+                <label for="opacitySlider" style="color: var(--text-secondary);">Heatmap Blend Opacity:</label>
+                <div class="slider-container">
+                  <input type="range" id="opacitySlider" min="0" max="100" value="65">
+                  <span id="opacityVal" style="font-family: var(--font-mono); font-weight: 600; width: 45px;">65%</span>
+                </div>
+              </div>
+
+              <div class="control-row">
+                <label for="colormapSelect" style="color: var(--text-secondary);">Colormap Palette:</label>
+                <select id="colormapSelect" style="background: rgba(0,0,0,0.5); border: 1px solid var(--border-subtle); color: #fff; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem;">
+                  <option value="JET" selected>JET (Standard Thermal)</option>
+                  <option value="TURBO">Turbo (High-Dynamic Perceptual)</option>
+                  <option value="VIRIDIS">Viridis (Colorblind Safe)</option>
+                  <option value="INFERNO">Inferno (High-Contrast)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="feature-callout">
+              <div class="feature-callout-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="16" x2="12" y2="12"/>
+                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                Explainability Methodology (Grad-CAM)
+              </div>
+              <div id="attentionInterpretation" class="feature-callout-text">
+                Computes gradients of the target class score with respect to feature maps in final convolutional layer <code>conv2d_5</code> to pinpoint discriminating morphological hallmarks.
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Morphology Metrics & Probability Distribution -->
+          <div class="glass-panel morphology-breakdown">
+            <div class="panel-header">
+              <h2 class="panel-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                Differential Probabilities & Morphology
+              </h2>
+            </div>
+
+            <!-- Morphology Feature Chips -->
+            <div class="morph-stats-grid">
+              <div class="stat-chip">
+                <div class="stat-chip-label">Nuclear-to-Cytoplasm (N:C)</div>
+                <div id="statNcRatio" class="stat-chip-val">--%</div>
+              </div>
+              <div class="stat-chip">
+                <div class="stat-chip-label">Peak Activation Intensity</div>
+                <div id="statPeakActivation" class="stat-chip-val">--</div>
+              </div>
+              <div class="stat-chip">
+                <div class="stat-chip-label">Acidophilic (Red) Granules</div>
+                <div id="statRedGranules" class="stat-chip-val">--%</div>
+              </div>
+              <div class="stat-chip">
+                <div class="stat-chip-label">Basophilic (Blue) Granules</div>
+                <div id="statBlueGranules" class="stat-chip-val">--%</div>
+              </div>
+            </div>
+
+            <!-- Probabilities breakdown -->
+            <div class="probability-section">
+              <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">
+                Complete 7-Class Distribution:
+              </div>
+              <div id="probList"></div>
+            </div>
+
+            <!-- Diagnostic Hallmarks -->
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+              <div class="feature-callout" style="border-left-color: #818cf8; background: rgba(99, 102, 241, 0.05);">
+                <div class="feature-callout-title" style="color: #a5b4fc;">Nuclear Architecture:</div>
+                <div id="nucleusDescription" class="feature-callout-text">--</div>
+              </div>
+
+              <div class="feature-callout" style="border-left-color: #10b981; background: rgba(16, 185, 129, 0.05);">
+                <div class="feature-callout-title" style="color: #34d399;">Cytoplasmic Granulation:</div>
+                <div id="granulesDescription" class="feature-callout-text">--</div>
+              </div>
+
+              <div class="feature-callout" style="border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.05);">
+                <div class="feature-callout-title" style="color: #fbbf24;">Clinical Relevance & Pathology:</div>
+                <div id="clinicalPearls" class="feature-callout-text">--</div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </main>
+  </div>
+
+  <!-- MODAL: WBC Morphological Atlas -->
+  <div id="atlasModal" class="modal-overlay">
+    <div class="modal-content">
+      <button id="closeAtlasBtn" class="modal-close-btn">&times;</button>
+      <h2 style="font-size: 1.4rem; font-weight: 700; color: #fff; margin-bottom: 6px;">
+        White Blood Cell (WBC) Differential Diagnostic Atlas
+      </h2>
+      <p style="color: var(--text-secondary); font-size: 0.88rem;">
+        Canonical hematology reference criteria for the 7 circulating leukocyte classifications and precursors.
+      </p>
+
+      <table class="atlas-table">
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Type</th>
+            <th>Normal %</th>
+            <th>Size</th>
+            <th>Nuclear Features</th>
+            <th>Cytoplasmic Granules</th>
+            <th>Pathologic Significance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong style="color: #fff;">Basophil</strong></td>
+            <td>Granulocyte</td>
+            <td>0.5 - 1.0%</td>
+            <td>10 - 14 µm</td>
+            <td>Bi-lobed or S-shaped, masked by granules</td>
+            <td>Coarse dark purple-black granules covering nucleus</td>
+            <td>Elevated in CML, allergic reactions, polycythemia</td>
+          </tr>
+          <tr>
+            <td><strong style="color: #fff;">Eosinophil</strong></td>
+            <td>Granulocyte</td>
+            <td>1.0 - 4.0%</td>
+            <td>12 - 17 µm</td>
+            <td>Bilobed spectacle-shaped, dark purple</td>
+            <td>Large uniform bright red-orange acidophilic spheres</td>
+            <td>Allergic asthma, parasitic helminths, eosinophilic leukemia</td>
+          </tr>
+          <tr>
+            <td><strong style="color: #fff;">Lymphocyte</strong></td>
+            <td>Agranulocyte</td>
+            <td>20.0 - 40.0%</td>
+            <td>7 - 16 µm</td>
+            <td>Round, dense clumped chromatin, high N:C (~4:1)</td>
+            <td>Scant sky-blue cytoplasm, mostly agranular</td>
+            <td>Viral infections (EBV, CMV), CLL, pertussis</td>
+          </tr>
+          <tr>
+            <td><strong style="color: #fda4af;">Metamyelocyte</strong></td>
+            <td>Immature Myeloid</td>
+            <td>0% (Abnormal)</td>
+            <td>10 - 15 µm</td>
+            <td>Reniform/kidney-shaped indented (<50% diameter)</td>
+            <td>Pink/lilac secondary neutrophilic granules</td>
+            <td>Left-shift: Acute severe bacterial sepsis, leukemoid reaction</td>
+          </tr>
+          <tr>
+            <td><strong style="color: #fff;">Monocyte</strong></td>
+            <td>Agranulocyte</td>
+            <td>2.0 - 8.0%</td>
+            <td>15 - 22 µm</td>
+            <td>Folded, brain-like indented convolutions</td>
+            <td>Opaque blue-grey "ground-glass" with fine dust granules</td>
+            <td>Chronic infections (TB, endocarditis), CMML, recovery</td>
+          </tr>
+          <tr>
+            <td><strong style="color: #fda4af;">Myelocyte</strong></td>
+            <td>Immature Myeloid</td>
+            <td>0% (Abnormal)</td>
+            <td>12 - 18 µm</td>
+            <td>Round/oval eccentric, early condensation</td>
+            <td>Emerging specific granules + remaining primary granules</td>
+            <td>Severe pathological left-shift, CML, myelofibrosis</td>
+          </tr>
+          <tr>
+            <td><strong style="color: #fff;">Neutrophil</strong></td>
+            <td>Granulocyte</td>
+            <td>40.0 - 70.0%</td>
+            <td>10 - 14 µm</td>
+            <td>Segmented into 2–5 lobules linked by fine filaments</td>
+            <td>Abundant fine pink-lilac neutral granules</td>
+            <td>Acute bacterial infections, acute inflammation, necrosis</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- MODAL: CNN Model Specs -->
+  <div id="modelModal" class="modal-overlay">
+    <div class="modal-content">
+      <button id="closeModelBtn" class="modal-close-btn">&times;</button>
+      <h2 style="font-size: 1.4rem; font-weight: 700; color: #fff; margin-bottom: 6px;">
+        Convolutional Neural Network Architecture & Explainability
+      </h2>
+      <p style="color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 18px;">
+        Model trained on Wright-Giemsa peripheral blood smears for 7-class differential diagnosis.
+      </p>
+
+      <div id="modelInfoContent">
+        <!-- Injected via JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.zip
+Training datasets.zip
+Testing datasets.zip
+blood_cell_classifier.h5
+scratch/
+.git/
+.gitignore

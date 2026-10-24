@@ -30,6 +30,24 @@ SAMPLES_DIR = os.path.join(STATIC_DIR, "samples")
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+# Also mount root paths so relative and absolute links (/css, /js, /samples, /model) work seamlessly
+css_dir = os.path.join(STATIC_DIR, "css")
+if os.path.exists(css_dir):
+    app.mount("/css", StaticFiles(directory=css_dir), name="css")
+
+js_dir = os.path.join(STATIC_DIR, "js")
+if os.path.exists(js_dir):
+    app.mount("/js", StaticFiles(directory=js_dir), name="js")
+
+samples_dir = os.path.join(STATIC_DIR, "samples")
+if os.path.exists(samples_dir):
+    app.mount("/samples", StaticFiles(directory=samples_dir), name="samples")
+
+model_dir = os.path.join(STATIC_DIR, "model")
+if os.path.exists(model_dir):
+    app.mount("/model", StaticFiles(directory=model_dir), name="model")
+
+
 # In-memory differential counter tally
 differential_tally = {cls: 0 for cls in CLASSES}
 
@@ -98,7 +116,7 @@ async def classify_cell(request: Request):
         colormap = body.get("colormap", "JET")
         if not sample_path:
             raise HTTPException(status_code=400, detail="Missing sample_path in JSON")
-        clean_path = sample_path.replace("/static/", "").replace("\\", "/")
+        clean_path = sample_path.replace("/static/", "").replace("\\", "/").lstrip("/")
         full_path = os.path.join(STATIC_DIR, clean_path)
         if not os.path.exists(full_path):
             raise HTTPException(status_code=404, detail=f"Sample image not found at {full_path}")
@@ -119,7 +137,7 @@ async def classify_cell(request: Request):
                 img_pil = Image.open(io.BytesIO(contents))
         
         if img_pil is None and sample_path:
-            clean_path = str(sample_path).replace("/static/", "").replace("\\", "/")
+            clean_path = str(sample_path).replace("/static/", "").replace("\\", "/").lstrip("/")
             full_path = os.path.join(STATIC_DIR, clean_path)
             if not os.path.exists(full_path):
                 raise HTTPException(status_code=404, detail=f"Sample image not found at {full_path}")

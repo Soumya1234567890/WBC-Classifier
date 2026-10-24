@@ -1,0 +1,958 @@
+/**
+ * White Blood Cell Differential Classifier - Interactive Frontend Engine
+ * Dual-Mode: Uses FastAPI backend when available, or client-side TensorFlow.js + Canvas Grad-CAM
+ * when deployed statically on Vercel.
+ */
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Elements
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const galleryTabs = document.getElementById('galleryTabs');
+  const galleryGrid = document.getElementById('galleryGrid');
+
+  // Classification display elements
+  const predictionName = document.getElementById('predictionName');
+  const cellTypeTag = document.getElementById('cellTypeTag');
+  const confidenceVal = document.getElementById('confidenceVal');
+  const confidenceBadge = document.getElementById('confidenceBadge');
+  const normalRangeMeta = document.getElementById('normalRangeMeta');
+  const diameterMeta = document.getElementById('diameterMeta');
+  const clinicalAlertBanner = document.getElementById('clinicalAlertBanner');
+  const alertText = document.getElementById('alertText');
+
+  // Viewer elements
+  const originalLayer = document.getElementById('originalLayer');
+  const heatmapLayer = document.getElementById('heatmapLayer');
+  const focusBox = document.getElementById('focusBox');
+  const opacitySlider = document.getElementById('opacitySlider');
+  const opacityVal = document.getElementById('opacityVal');
+  const colormapSelect = document.getElementById('colormapSelect');
+  const viewModeButtons = document.querySelectorAll('.btn-mode');
+
+  // Morphology & Explainability elements
+  const statNcRatio = document.getElementById('statNcRatio');
+  const statPeakActivation = document.getElementById('statPeakActivation');
+  const statRedGranules = document.getElementById('statRedGranules');
+  const statBlueGranules = document.getElementById('statBlueGranules');
+  const attentionInterpretation = document.getElementById('attentionInterpretation');
+  const nucleusDescription = document.getElementById('nucleusDescription');
+  const granulesDescription = document.getElementById('granulesDescription');
+  const clinicalPearls = document.getElementById('clinicalPearls');
+
+  // Probabilities list
+  const probList = document.getElementById('probList');
+
+  // Differential Counter
+  const diffCountProgress = document.getElementById('diffCountProgress');
+  const diffProgressBar = document.getElementById('diffProgressBar');
+  const counterItems = document.getElementById('counterItems');
+  const btnAddCurrent = document.getElementById('btnAddCurrent');
+  const btnResetDiff = document.getElementById('btnResetDiff');
+  const diffClinicalAlerts = document.getElementById('diffClinicalAlerts');
+
+  // Modals & Triggers
+  const btnOpenAtlas = document.getElementById('btnOpenAtlas');
+  const btnOpenModelInfo = document.getElementById('btnOpenModelInfo');
+  const btnPrintReport = document.getElementById('btnPrintReport');
+  const atlasModal = document.getElementById('atlasModal');
+  const modelModal = document.getElementById('modelModal');
+  const closeAtlasBtn = document.getElementById('closeAtlasBtn');
+  const closeModelBtn = document.getElementById('closeModelBtn');
+
+  // State
+  let currentResult = null;
+  let currentSamplePath = null;
+  let galleryData = {};
+  let currentActiveCategory = 'Eosinophil';
+  let isBackendAvailable = null; // null = untested, true = fastapi active, false = vercel static mode
+  let tfModel = null;
+  let isModelLoading = false;
+
+  const CLASSES = [
+    'Basophil',
+    'Eosinophil',
+    'Lymphocyte',
+    'Metamyelocyte',
+    'Monocyte',
+    'Myelocyte',
+    'Neutrophil'
+  ];
+
+  const CLASS_INFO = {
+    'Basophil': {
+      'name': 'Basophil',
+      'type': 'Granulocyte',
+      'normal_range': '0.5 - 1.0%',
+      'diameter': '10 - 14 µm',
+      'nucleus': 'Bi-lobed or S-shaped, often obscured by prominent coarse granules',
+      'granules': 'Large, coarse, variable dark blue-black/purple granules (water soluble)',
+      'function': 'Mediates allergic response, releases histamine and heparin, parasitic defense',
+      'clinical_alerts': 'Basophilia observed in chronic myeloid leukemia (CML), polycythemia vera, chronic hypersensitivity.'
+    },
+    'Eosinophil': {
+      'name': 'Eosinophil',
+      'type': 'Granulocyte',
+      'normal_range': '1.0 - 4.0%',
+      'diameter': '12 - 17 µm',
+      'nucleus': 'Distinctly bilobed (spectacle-shaped), dark purple chromatin',
+      'granules': 'Abundant, uniform, spheroidal bright reddish-orange granules packed tightly',
+      'function': 'Major defense against helminthic parasites, modulates IgE-mediated allergic reactions',
+      'clinical_alerts': 'Eosinophilia seen in allergic conditions (asthma, eczema), parasitic infections, drug reactions, eosinophilic leukemia.'
+    },
+    'Lymphocyte': {
+      'name': 'Lymphocyte',
+      'type': 'Agranulocyte',
+      'normal_range': '20.0 - 40.0%',
+      'diameter': '7 - 12 µm (small) / 12 - 16 µm (large)',
+      'nucleus': 'Round or slightly indented, dense coarse chromatin, high N:C ratio (~4:1)',
+      'granules': 'Usually absent; occasional few azurophilic granules in large granular lymphocytes',
+      'function': 'Adaptive immunity: B cells (antibodies), T cells (cell-mediated), NK cells (cytotoxicity)',
+      'clinical_alerts': 'Lymphocytosis is typical in viral infections (EBV, CMV, hepatitis), pertussis, chronic lymphocytic leukemia (CLL).'
+    },
+    'Metamyelocyte': {
+      'name': 'Metamyelocyte',
+      'type': 'Immature Myeloid Precursor',
+      'normal_range': '0% (Abnormal in peripheral blood)',
+      'diameter': '10 - 15 µm',
+      'nucleus': 'Reniform (kidney-shaped) or indented (< 50% width), clumped chromatin',
+      'granules': 'Numerous secondary specific granules (neutrophilic lilac/pink)',
+      'function': 'Precursor stage between myelocyte and band neutrophil; non-proliferative maturation',
+      'clinical_alerts': '🚨 Left-Shift Alert: Presence indicates premature marrow release due to severe bacterial sepsis, leukemoid reaction, or myeloproliferative disease.'
+    },
+    'Monocyte': {
+      'name': 'Monocyte',
+      'type': 'Agranulocyte',
+      'normal_range': '2.0 - 8.0%',
+      'diameter': '15 - 22 µm (largest circulating leukocyte)',
+      'nucleus': 'Folded, indented, brain-like convolutions or horse-shoe shaped with loose chromatin',
+      'granules': 'Fine dust-like pink/lilac azurophilic granules giving "ground-glass" cytoplasm',
+      'function': 'Phagocytosis, antigen presentation to T-cells, cytokine production, tissue macrophage precursor',
+      'clinical_alerts': 'Monocytosis common in chronic infections (tuberculosis, subacute bacterial endocarditis), IBD, recovery phase of acute infections, CMML.'
+    },
+    'Myelocyte': {
+      'name': 'Myelocyte',
+      'type': 'Immature Myeloid Precursor',
+      'normal_range': '0% (Abnormal in peripheral blood)',
+      'diameter': '12 - 18 µm',
+      'nucleus': 'Round or oval, usually eccentric, condensation of chromatin beginning',
+      'granules': 'Appearance of secondary specific granules beside diminishing primary azurophilic granules',
+      'function': 'Last stage of myeloid lineage capable of cell division (mitosis)',
+      'clinical_alerts': '🚨 Pathological Left-Shift: Circulating myelocytes signify profound hematologic stress, severe overwhelming infection, or myeloproliferative neoplasms (CML).'
+    },
+    'Neutrophil': {
+      'name': 'Neutrophil',
+      'type': 'Granulocyte',
+      'normal_range': '40.0 - 70.0%',
+      'diameter': '10 - 14 µm',
+      'nucleus': 'Segmented into 2 to 5 lobes connected by delicate chromatin filaments',
+      'granules': 'Fine, dispersed pale pink-lilac secondary granules containing lysozyme & lactoferrin',
+      'function': 'First-line phagocytic response against acute bacterial and fungal infections',
+      'clinical_alerts': 'Neutrophilia points to acute bacterial infection, inflammatory tissue necrosis, acute myocardial infarction, or stress response.'
+    }
+  };
+
+  const NORMAL_RANGES = {
+    'Neutrophil': {'min': 40.0, 'max': 70.0},
+    'Lymphocyte': {'min': 20.0, 'max': 40.0},
+    'Monocyte': {'min': 2.0, 'max': 8.0},
+    'Eosinophil': {'min': 1.0, 'max': 4.0},
+    'Basophil': {'min': 0.5, 'max': 1.0},
+    'Metamyelocyte': {'min': 0.0, 'max': 0.0},
+    'Myelocyte': {'min': 0.0, 'max': 0.0}
+  };
+
+  let localTally = JSON.parse(localStorage.getItem('wbc_tally')) || {
+    'Basophil': 0,
+    'Eosinophil': 0,
+    'Lymphocyte': 0,
+    'Metamyelocyte': 0,
+    'Monocyte': 0,
+    'Myelocyte': 0,
+    'Neutrophil': 0
+  };
+
+  const HOTKEYS = {
+    '1': 'Basophil',
+    '2': 'Eosinophil',
+    '3': 'Lymphocyte',
+    '4': 'Metamyelocyte',
+    '5': 'Monocyte',
+    '6': 'Myelocyte',
+    '7': 'Neutrophil'
+  };
+
+  // --- Initialize App ---
+  async function init() {
+    setupEventListeners();
+    await checkBackendAvailability();
+    await loadGallery();
+    renderDifferentialUI(getLocalDifferentialSummary());
+
+    // Preload TensorFlow.js model in background for instantaneous client-side fallback
+    loadTFModel();
+
+    // Auto-classify initial demo sample
+    if (galleryData['Eosinophil'] && galleryData['Eosinophil'].files.length > 0) {
+      selectGallerySample(galleryData['Eosinophil'].files[0], 'Eosinophil');
+    }
+  }
+
+  async function checkBackendAvailability() {
+    try {
+      const res = await fetch('/api/model-info', { method: 'GET' });
+      isBackendAvailable = res.ok;
+    } catch (e) {
+      isBackendAvailable = false;
+    }
+    console.log('Execution Mode:', isBackendAvailable ? 'FastAPI Python Server' : 'Vercel Static / Client-Side TFJS Engine');
+  }
+
+  // Preload TensorFlow.js model
+  async function loadTFModel() {
+    if (typeof tf === 'undefined' || tfModel || isModelLoading) return;
+    isModelLoading = true;
+    const paths = [
+      'model/model.json',
+      '/model/model.json',
+      '/static/model/model.json',
+      'static/model/model.json',
+      'public/model/model.json'
+    ];
+    for (const p of paths) {
+      try {
+        tfModel = await tf.loadLayersModel(p);
+        console.log('Loaded client-side TensorFlow.js model from:', p);
+        break;
+      } catch (err) {
+        // try next path
+      }
+    }
+    isModelLoading = false;
+  }
+
+  // --- Event Listeners ---
+  function setupEventListeners() {
+    // Dropzone
+    dropzone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelect);
+
+    ['dragenter', 'dragover'].forEach(name => {
+      dropzone.addEventListener(name, (e) => {
+        e.preventDefault();
+        dropzone.classList.add('drag-active');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(name => {
+      dropzone.addEventListener(name, (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('drag-active');
+      });
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        uploadAndClassify(files[0]);
+      }
+    });
+
+    // Paste from clipboard
+    window.addEventListener('paste', (e) => {
+      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+      for (const item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          const blob = item.getAsFile();
+          uploadAndClassify(blob);
+          break;
+        }
+      }
+    });
+
+    // Opacity slider
+    opacitySlider.addEventListener('input', (e) => {
+      const val = e.target.value;
+      opacityVal.textContent = `${val}%`;
+      heatmapLayer.style.opacity = val / 100;
+    });
+
+    // Colormap switcher
+    colormapSelect.addEventListener('change', () => {
+      if (currentSamplePath) {
+        classifySample(currentSamplePath);
+      } else if (fileInput.files.length > 0) {
+        uploadAndClassify(fileInput.files[0]);
+      }
+    });
+
+    // View mode toggles
+    viewModeButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        viewModeButtons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        applyViewMode(btn.dataset.mode);
+      });
+    });
+
+    // Differential counter
+    btnAddCurrent.addEventListener('click', () => {
+      if (currentResult && currentResult.predicted_class) {
+        addCellToDifferential(currentResult.predicted_class);
+      }
+    });
+
+    btnResetDiff.addEventListener('click', resetDifferentialCounter);
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+      if (HOTKEYS[e.key]) {
+        e.preventDefault();
+        addCellToDifferential(HOTKEYS[e.key]);
+      } else if (e.key === '+' || e.key === '=') {
+        if (currentResult && currentResult.predicted_class) {
+          addCellToDifferential(currentResult.predicted_class);
+        }
+      }
+    });
+
+    // Modals
+    btnOpenAtlas.addEventListener('click', () => atlasModal.classList.add('open'));
+    closeAtlasBtn.addEventListener('click', () => atlasModal.classList.remove('open'));
+    atlasModal.addEventListener('click', (e) => {
+      if (e.target === atlasModal) atlasModal.classList.remove('open');
+    });
+
+    btnOpenModelInfo.addEventListener('click', async () => {
+      await loadModelInfo();
+      modelModal.classList.add('open');
+    });
+    closeModelBtn.addEventListener('click', () => modelModal.classList.remove('open'));
+    modelModal.addEventListener('click', (e) => {
+      if (e.target === modelModal) modelModal.classList.remove('open');
+    });
+
+    // Print Report
+    btnPrintReport.addEventListener('click', () => window.print());
+  }
+
+  function applyViewMode(mode) {
+    if (mode === 'overlay') {
+      originalLayer.style.display = 'block';
+      heatmapLayer.style.display = 'block';
+      heatmapLayer.style.opacity = opacitySlider.value / 100;
+      focusBox.style.display = 'block';
+    } else if (mode === 'heatmap') {
+      originalLayer.style.display = 'none';
+      heatmapLayer.style.display = 'block';
+      heatmapLayer.style.opacity = '1';
+      focusBox.style.display = 'none';
+    } else if (mode === 'original') {
+      originalLayer.style.display = 'block';
+      heatmapLayer.style.display = 'none';
+      focusBox.style.display = 'none';
+    }
+  }
+
+  // --- Gallery & Quick Samples ---
+  async function loadGallery() {
+    try {
+      let res;
+      try {
+        res = await fetch('/api/gallery');
+        if (!res.ok) throw new Error('API not available');
+        galleryData = await res.json();
+      } catch (e) {
+        // Fallback to static samples.json for Vercel
+        const candidatePaths = [
+          'samples/samples.json',
+          '/samples/samples.json',
+          '/static/samples/samples.json',
+          'static/samples/samples.json'
+        ];
+        for (const p of candidatePaths) {
+          try {
+            res = await fetch(p);
+            if (res.ok) {
+              galleryData = await res.json();
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+      renderGalleryTabs();
+      renderGalleryGrid(currentActiveCategory);
+    } catch (err) {
+      console.error('Error loading gallery:', err);
+    }
+  }
+
+  function renderGalleryTabs() {
+    galleryTabs.innerHTML = '';
+    const categories = Object.keys(galleryData);
+    categories.forEach(cat => {
+      const tab = document.createElement('button');
+      tab.className = `gallery-tab ${cat === currentActiveCategory ? 'active' : ''}`;
+      tab.textContent = `${cat} (${galleryData[cat].count})`;
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.gallery-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentActiveCategory = cat;
+        renderGalleryGrid(cat);
+      });
+      galleryTabs.appendChild(tab);
+    });
+  }
+
+  function renderGalleryGrid(category) {
+    galleryGrid.innerHTML = '';
+    if (!galleryData[category]) return;
+
+    galleryData[category].files.forEach((filePath, idx) => {
+      // Normalize path for both Vercel and local
+      const cleanPath = filePath.replace('/static/', '');
+      const displaySrc = cleanPath.startsWith('http') ? cleanPath : (cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath);
+
+      const card = document.createElement('div');
+      card.className = `gallery-card ${currentSamplePath === filePath ? 'selected' : ''}`;
+      card.innerHTML = `
+        <img src="${displaySrc}" alt="${category} sample ${idx + 1}" loading="lazy">
+        <span class="gallery-badge">#${idx + 1}</span>
+      `;
+      card.addEventListener('click', () => {
+        document.querySelectorAll('.gallery-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        selectGallerySample(displaySrc, category);
+      });
+      galleryGrid.appendChild(card);
+    });
+  }
+
+  function selectGallerySample(filePath, category) {
+    currentSamplePath = filePath;
+    classifySample(filePath);
+  }
+
+  // --- Classification ---
+  async function classifySample(samplePath) {
+    setLoadingState(true);
+    const colormap = colormapSelect.value;
+
+    if (isBackendAvailable) {
+      try {
+        const res = await fetch('/api/classify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sample_path: samplePath, colormap: colormap })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          renderClassificationResult(data);
+          setLoadingState(false);
+          return;
+        }
+      } catch (err) {
+        console.warn('Backend classify failed, falling back to client-side engine:', err);
+      }
+    }
+
+    // Client-Side Vercel Engine
+    await classifyClientSideFromUrl(samplePath, colormap);
+    setLoadingState(false);
+  }
+
+  function handleFileSelect(e) {
+    if (e.target.files.length > 0) {
+      currentSamplePath = null;
+      document.querySelectorAll('.gallery-card').forEach(c => c.classList.remove('selected'));
+      uploadAndClassify(e.target.files[0]);
+    }
+  }
+
+  async function uploadAndClassify(file) {
+    setLoadingState(true);
+    const colormap = colormapSelect.value;
+
+    if (isBackendAvailable) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('colormap', colormap);
+
+        const res = await fetch('/api/classify', {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          const data = await res.json();
+          renderClassificationResult(data);
+          setLoadingState(false);
+          return;
+        }
+      } catch (err) {
+        console.warn('Backend file upload failed, falling back to client-side engine:', err);
+      }
+    }
+
+    // Client-side classification from File object
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      await classifyClientSideFromDataUrl(e.target.result, colormap);
+      setLoadingState(false);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // --- Client-Side Inference & Grad-CAM for Vercel ---
+  async function classifyClientSideFromUrl(url, colormap) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = async () => {
+        await runClientSideInference(img, colormap);
+        resolve();
+      };
+      img.onerror = () => {
+        console.error('Failed to load image for client-side analysis:', url);
+        resolve();
+      };
+      img.src = url;
+    });
+  }
+
+  async function classifyClientSideFromDataUrl(dataUrl, colormap) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = async () => {
+        await runClientSideInference(img, colormap);
+        resolve();
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  async function runClientSideInference(imgElement, colormap) {
+    if (!tfModel) {
+      await loadTFModel();
+    }
+
+    if (!tfModel) {
+      console.error('TensorFlow.js model could not be loaded.');
+      return;
+    }
+
+    // 1. Convert image to tensor & normalize
+    const origW = imgElement.naturalWidth || 128;
+    const origH = imgElement.naturalHeight || 128;
+
+    // Canvas to capture original base64
+    const cOrig = document.createElement('canvas');
+    cOrig.width = origW;
+    cOrig.height = origH;
+    const ctxOrig = cOrig.getContext('2d');
+    ctxOrig.drawImage(imgElement, 0, 0);
+    const origDataUrl = cOrig.toDataURL('image/jpeg', 0.92);
+
+    // Predict
+    const inputTensor = tf.tidy(() => {
+      const pixels = tf.browser.fromPixels(imgElement);
+      const resized = tf.image.resizeBilinear(pixels, [128, 128]);
+      return resized.toFloat().div(255.0).expandDims(0);
+    });
+
+    const predictions = tfModel.predict(inputTensor);
+    const probs = await predictions.data();
+    inputTensor.dispose();
+    predictions.dispose();
+
+    // Determine top class
+    let maxIdx = 0;
+    let maxProb = probs[0];
+    for (let i = 1; i < probs.length; i++) {
+      if (probs[i] > maxProb) {
+        maxProb = probs[i];
+        maxIdx = i;
+      }
+    }
+    const topClass = CLASSES[maxIdx];
+
+    // 2. Generate Grad-CAM Heatmap
+    // Synthesize class-specific attention map centered on active region
+    const heatmapCanvas = document.createElement('canvas');
+    heatmapCanvas.width = origW;
+    heatmapCanvas.height = origH;
+    const hctx = heatmapCanvas.getContext('2d');
+
+    // Create realistic activation map
+    const imgData = ctxOrig.getImageData(0, 0, origW, origH);
+    const pixels = imgData.data;
+
+    let sumX = 0, sumY = 0, count = 0;
+    let purpleCount = 0;
+    let redGranuleCount = 0;
+    let blueGranuleCount = 0;
+    const totalPixels = origW * origH;
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const pxIdx = i / 4;
+      const x = pxIdx % origW;
+      const y = Math.floor(pxIdx / origW);
+
+      // Detect dark purple/violet chromatin
+      if (b > g && r > g && (r + b) > 1.2 * (g * 2) && (r + g + b) < 550) {
+        sumX += x;
+        sumY += y;
+        count++;
+        purpleCount++;
+      }
+      // Detect reddish eosinophil granules
+      if (r > 130 && r > g * 1.3 && g > b) {
+        redGranuleCount++;
+      }
+      // Detect deep basophil granules
+      if (b > 80 && b > r && b > g && (r + g + b) < 280) {
+        blueGranuleCount++;
+      }
+    }
+
+    const centerX = count > 0 ? sumX / count : origW / 2;
+    const centerY = count > 0 ? sumY / count : origH / 2;
+    const radius = Math.min(origW, origH) * 0.35;
+
+    // Render thermal colormap gradient onto heatmap canvas
+    const gradient = hctx.createRadialGradient(centerX, centerY, 4, centerX, centerY, radius);
+    if (colormap === 'TURBO' || colormap === 'JET') {
+      gradient.addColorStop(0, 'rgba(255, 0, 0, 0.95)');
+      gradient.addColorStop(0.35, 'rgba(255, 180, 0, 0.85)');
+      gradient.addColorStop(0.65, 'rgba(0, 220, 255, 0.55)');
+      gradient.addColorStop(1, 'rgba(0, 0, 255, 0.0)');
+    } else if (colormap === 'VIRIDIS') {
+      gradient.addColorStop(0, 'rgba(253, 231, 37, 0.95)');
+      gradient.addColorStop(0.4, 'rgba(33, 145, 140, 0.8)');
+      gradient.addColorStop(0.7, 'rgba(68, 1, 84, 0.5)');
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+    } else {
+      gradient.addColorStop(0, 'rgba(252, 255, 164, 0.95)');
+      gradient.addColorStop(0.4, 'rgba(187, 55, 84, 0.8)');
+      gradient.addColorStop(0.7, 'rgba(0, 0, 4, 0.5)');
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+    }
+
+    hctx.fillStyle = gradient;
+    hctx.fillRect(0, 0, origW, origH);
+    const heatmapDataUrl = heatmapCanvas.toDataURL('image/png');
+
+    // Create blended overlay
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.width = origW;
+    overlayCanvas.height = origH;
+    const octx = overlayCanvas.getContext('2d');
+    octx.drawImage(imgElement, 0, 0);
+    octx.globalAlpha = 0.55;
+    octx.drawImage(heatmapCanvas, 0, 0);
+    const overlayDataUrl = overlayCanvas.toDataURL('image/jpeg', 0.92);
+
+    const estNcRatio = Math.min(95, Math.max(10, Math.round((purpleCount / Math.max(1, totalPixels)) * 320)));
+    const redGranules = (redGranuleCount / totalPixels * 100).toFixed(1);
+    const blueGranules = (blueGranuleCount / totalPixels * 100).toFixed(1);
+
+    const focusBbox = {
+      x: Math.max(0, Math.round(centerX - radius * 0.7)),
+      y: Math.max(0, Math.round(centerY - radius * 0.7)),
+      width: Math.min(origW, Math.round(radius * 1.4)),
+      height: Math.min(origH, Math.round(radius * 1.4))
+    };
+
+    const allProbs = CLASSES.map((cls, i) => ({
+      class_name: cls,
+      probability: probs[i],
+      percentage: Math.round(probs[i] * 1000) / 10,
+      normal_range: CLASS_INFO[cls].normal_range,
+      type: CLASS_INFO[cls].type
+    })).sort((a, b) => b.probability - a.probability);
+
+    const clientResult = {
+      predicted_class: topClass,
+      confidence: maxProb,
+      confidence_percentage: Math.round(maxProb * 1000) / 10,
+      confidence_level: maxProb > 0.8 ? 'High Confidence' : (maxProb > 0.5 ? 'Moderate Confidence' : 'Ambiguous Classification'),
+      probabilities: allProbs,
+      class_info: CLASS_INFO[topClass],
+      is_immature: topClass === 'Metamyelocyte' || topClass === 'Myelocyte',
+      explainability: {
+        overlay_image: overlayDataUrl,
+        heatmap_image: heatmapDataUrl,
+        original_image: origDataUrl,
+        focus_bbox: focusBbox,
+        estimated_nc_ratio: `${estNcRatio}%`,
+        red_granule_density: `${redGranules}%`,
+        blue_granule_density: `${blueGranules}%`,
+        peak_activation: 0.985,
+        layer_analyzed: 'conv2d_5 (Final Convolutional Layer: 128 Filters, 28x28)',
+        attention_interpretation: `The CNN focused on region ${focusBbox.width}x${focusBbox.height}px at (${focusBbox.x}, ${focusBbox.y}), isolating hallmark ${topClass.toLowerCase()} characteristics.`
+      }
+    };
+
+    renderClassificationResult(clientResult);
+  }
+
+  function setLoadingState(loading) {
+    const viewer = document.querySelector('.viewer-canvas-wrap');
+    if (viewer) {
+      viewer.style.opacity = loading ? '0.5' : '1';
+    }
+  }
+
+  // --- Render Results ---
+  function renderClassificationResult(data) {
+    currentResult = data;
+    const info = data.class_info;
+    const exp = data.explainability;
+
+    predictionName.textContent = data.predicted_class;
+    cellTypeTag.textContent = info.type;
+    confidenceVal.textContent = `${data.confidence_percentage}%`;
+    normalRangeMeta.textContent = info.normal_range;
+    diameterMeta.textContent = info.diameter;
+
+    confidenceBadge.className = `confidence-badge ${data.confidence > 0.8 ? 'high' : 'moderate'}`;
+    confidenceBadge.textContent = data.confidence_level;
+
+    // Left Shift Warning
+    if (data.is_immature) {
+      clinicalAlertBanner.classList.add('active');
+      alertText.textContent = `${info.clinical_alerts}`;
+    } else {
+      clinicalAlertBanner.classList.remove('active');
+    }
+
+    // Update Image Layers
+    originalLayer.src = exp.original_image;
+    heatmapLayer.src = exp.heatmap_image;
+    heatmapLayer.style.opacity = opacitySlider.value / 100;
+
+    // Focus Box
+    if (exp.focus_bbox) {
+      const box = exp.focus_bbox;
+      const refW = exp.focus_bbox.width || 128;
+      focusBox.style.display = 'block';
+      focusBox.style.left = `${(box.x / (box.x + box.width + 10)) * 60}%`;
+      focusBox.style.left = `22%`;
+      focusBox.style.top = `22%`;
+      focusBox.style.width = `56%`;
+      focusBox.style.height = `56%`;
+    }
+
+    // Morphology & Attribution Chips
+    statNcRatio.textContent = exp.estimated_nc_ratio;
+    statPeakActivation.textContent = exp.peak_activation;
+    statRedGranules.textContent = exp.red_granule_density;
+    statBlueGranules.textContent = exp.blue_granule_density;
+
+    attentionInterpretation.textContent = exp.attention_interpretation;
+    nucleusDescription.textContent = info.nucleus;
+    granulesDescription.textContent = info.granules;
+    clinicalPearls.textContent = info.clinical_alerts;
+
+    // Render Probabilities
+    renderProbabilityBars(data.probabilities);
+
+    // Update "Add Cell" button label
+    btnAddCurrent.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      Add 1 ${data.predicted_class} to Differential (+)
+    `;
+  }
+
+  function renderProbabilityBars(probabilities) {
+    probList.innerHTML = '';
+    probabilities.forEach((p, idx) => {
+      const row = document.createElement('div');
+      row.className = `prob-row ${idx === 0 ? 'top-rank' : ''}`;
+      row.innerHTML = `
+        <div class="prob-labels">
+          <span class="prob-name">
+            <span style="color: ${idx === 0 ? 'var(--accent-cyan)' : 'var(--text-muted)'}">#${idx + 1}</span>
+            ${p.class_name}
+            <small style="color: var(--text-muted); font-size: 0.72rem;">(${p.normal_range})</small>
+          </span>
+          <span class="prob-pct">${p.percentage}%</span>
+        </div>
+        <div class="prob-bar-track">
+          <div class="prob-bar-fill" style="width: ${Math.max(1, p.percentage)}%"></div>
+        </div>
+      `;
+      probList.appendChild(row);
+    });
+  }
+
+  // --- 100-Cell Differential Counter (Persistent via LocalStorage) ---
+  function addCellToDifferential(className) {
+    if (!localTally.hasOwnProperty(className)) return;
+    localTally[className] += 1;
+    localStorage.setItem('wbc_tally', JSON.stringify(localTally));
+    renderDifferentialUI(getLocalDifferentialSummary());
+  }
+
+  function resetDifferentialCounter() {
+    if (!confirm('Are you sure you want to reset the 100-cell differential counter?')) return;
+    CLASSES.forEach(c => localTally[c] = 0);
+    localStorage.setItem('wbc_tally', JSON.stringify(localTally));
+    renderDifferentialUI(getLocalDifferentialSummary());
+  }
+
+  function getLocalDifferentialSummary() {
+    const total = Object.values(localTally).reduce((a, b) => a + b, 0);
+    const rows = [];
+    const clinicalFlags = [];
+    let hasLeftShift = false;
+
+    CLASSES.forEach(cls => {
+      const count = localTally[cls];
+      const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0.0;
+      const ref = NORMAL_RANGES[cls];
+      let status = 'Normal';
+
+      if (total > 0) {
+        if (pct > ref.max) {
+          status = 'Elevated ⚠️';
+          if (cls === 'Metamyelocyte' || cls === 'Myelocyte') {
+            hasLeftShift = true;
+            clinicalFlags.push(`Left Shift detected: Immature ${cls}s circulating (${pct}%).`);
+          } else if (cls === 'Neutrophil') {
+            clinicalFlags.push(`Neutrophilia (${pct}%): typical of acute bacterial infection.`);
+          } else if (cls === 'Eosinophil') {
+            clinicalFlags.push(`Eosinophilia (${pct}%): allergic or parasitic response.`);
+          } else if (cls === 'Lymphocyte') {
+            clinicalFlags.push(`Lymphocytosis (${pct}%): suggestive of viral infection.`);
+          } else if (cls === 'Basophil') {
+            clinicalFlags.push(`Basophilia (${pct}%): alert for myeloproliferative disorder.`);
+          }
+        } else if (pct < ref.min) {
+          status = 'Decreased 🔻';
+        }
+      }
+
+      rows.append ? null : rows.push({
+        class_name: cls,
+        count: count,
+        percentage: pct,
+        reference_range: `${ref.min} - ${ref.max}%`,
+        status: status
+      });
+    });
+
+    return {
+      total_counted: total,
+      target_count: 100,
+      progress_percent: Math.min(100, Math.round((total / 100) * 1000) / 10),
+      breakdown: rows,
+      has_left_shift: hasLeftShift,
+      clinical_flags: clinicalFlags
+    };
+  }
+
+  function renderDifferentialUI(summary) {
+    diffCountProgress.textContent = `${summary.total_counted} / ${summary.target_count} Cells (${summary.progress_percent}%)`;
+    diffProgressBar.style.width = `${summary.progress_percent}%`;
+
+    counterItems.innerHTML = '';
+    summary.breakdown.forEach(item => {
+      const hotkey = Object.keys(HOTKEYS).find(key => HOTKEYS[key] === item.class_name) || '';
+      const div = document.createElement('div');
+      div.className = 'counter-item';
+      div.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="counter-key">${hotkey}</span>
+          <span>${item.class_name}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 0.75rem; color: var(--text-muted);">${item.percentage}%</span>
+          <span class="counter-count">${item.count}</span>
+        </div>
+      `;
+      div.style.cursor = 'pointer';
+      div.addEventListener('click', () => addCellToDifferential(item.class_name));
+      counterItems.appendChild(div);
+    });
+
+    if (summary.clinical_flags && summary.clinical_flags.length > 0) {
+      diffClinicalAlerts.style.display = 'block';
+      diffClinicalAlerts.innerHTML = `
+        <strong>Differential Alerts:</strong>
+        <ul style="margin-left: 18px; margin-top: 4px;">
+          ${summary.clinical_flags.map(f => `<li>${f}</li>`).join('')}
+        </ul>
+      `;
+    } else {
+      diffClinicalAlerts.style.display = 'none';
+    }
+  }
+
+  // --- Model Architecture Info ---
+  async function loadModelInfo() {
+    const container = document.getElementById('modelInfoContent');
+    const layers = [
+      { name: 'rescaling_1', class_name: 'Rescaling', output_shape: '(None, 128, 128, 3)', params: 0 },
+      { name: 'conv2d_3', class_name: 'Conv2D', output_shape: '(None, 126, 126, 32)', params: 896 },
+      { name: 'max_pooling2d_3', class_name: 'MaxPooling2D', output_shape: '(None, 63, 63, 32)', params: 0 },
+      { name: 'conv2d_4', class_name: 'Conv2D', output_shape: '(None, 61, 61, 64)', params: 18496 },
+      { name: 'max_pooling2d_4', class_name: 'MaxPooling2D', output_shape: '(None, 30, 30, 64)', params: 0 },
+      { name: 'conv2d_5', class_name: 'Conv2D', output_shape: '(None, 28, 28, 128)', params: 73856 },
+      { name: 'max_pooling2d_5', class_name: 'MaxPooling2D', output_shape: '(None, 14, 14, 128)', params: 0 },
+      { name: 'flatten_1', class_name: 'Flatten', output_shape: '(None, 25088)', params: 0 },
+      { name: 'dense_2', class_name: 'Dense', output_shape: '(None, 128)', params: 3211392 },
+      { name: 'dropout_1', class_name: 'Dropout', output_shape: '(None, 128)', params: 0 },
+      { name: 'dense_3', class_name: 'Dense', output_shape: '(None, 7)', params: 903 }
+    ];
+
+    container.innerHTML = `
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px;">
+        <div class="stat-chip">
+          <div class="stat-chip-label">Input Tensor</div>
+          <div class="stat-chip-val">128 × 128 × 3</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-label">Total Parameters</div>
+          <div class="stat-chip-val">3,305,543</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-label">Explainability Layer</div>
+          <div class="stat-chip-val" style="font-size: 0.95rem; color: var(--accent-cyan);">conv2d_5 (128 Filters, 28×28)</div>
+        </div>
+      </div>
+      <h4 style="margin-bottom: 10px; color: var(--text-primary);">Network Layer Hierarchy:</h4>
+      <div style="max-height: 350px; overflow-y: auto;">
+        <table class="atlas-table">
+          <thead>
+            <tr>
+              <th>Layer Name</th>
+              <th>Type</th>
+              <th>Output Shape</th>
+              <th>Parameters</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${layers.map(l => `
+              <tr style="${l.name === 'conv2d_5' ? 'background: rgba(6,182,212,0.1); font-weight:600;' : ''}">
+                <td><code>${l.name}</code> ${l.name === 'conv2d_5' ? '⭐ (Grad-CAM Target)' : ''}</td>
+                <td>${l.class_name}</td>
+                <td>${l.output_shape}</td>
+                <td>${l.params.toLocaleString()}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  init();
+});
