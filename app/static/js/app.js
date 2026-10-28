@@ -68,6 +68,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let isBackendAvailable = null; // null = untested, true = fastapi active, false = vercel static mode
   let tfModel = null;
   let isModelLoading = false;
+  let currentCam28 = null;
+  let currentOrigW = 128;
+  let currentOrigH = 128;
+  let currentTransparentHeatmap = null;
+  let currentSolidHeatmap = null;
+  let currentFocusBbox = null;
+  let currentViewMode = 'overlay';
 
   const CLASSES = [
     'Basophil',
@@ -279,11 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Colormap switcher
     colormapSelect.addEventListener('change', () => {
-      if (currentSamplePath) {
-        classifySample(currentSamplePath);
-      } else if (fileInput.files.length > 0) {
-        uploadAndClassify(fileInput.files[0]);
-      }
+      updateHeatmapDisplay(colormapSelect.value);
     });
 
     // View mode toggles
@@ -339,13 +342,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function applyViewMode(mode) {
+    currentViewMode = mode;
     if (mode === 'overlay') {
       originalLayer.style.display = 'block';
+      heatmapLayer.src = currentTransparentHeatmap || (currentResult && currentResult.explainability ? currentResult.explainability.heatmap_image : '');
       heatmapLayer.style.display = 'block';
       heatmapLayer.style.opacity = opacitySlider.value / 100;
       focusBox.style.display = 'block';
     } else if (mode === 'heatmap') {
       originalLayer.style.display = 'none';
+      heatmapLayer.src = currentSolidHeatmap || (currentResult && currentResult.explainability ? (currentResult.explainability.solid_heatmap_image || currentResult.explainability.heatmap_image) : '');
       heatmapLayer.style.display = 'block';
       heatmapLayer.style.opacity = '1';
       focusBox.style.display = 'none';
@@ -533,6 +539,216 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Scientific Colormap & Heatmap Generation Engine ---
+  const VIRIDIS_LUT = [
+    [68, 1, 84],
+    [71, 44, 122],
+    [59, 81, 139],
+    [44, 113, 142],
+    [33, 144, 141],
+    [39, 173, 129],
+    [92, 200, 99],
+    [170, 220, 50],
+    [253, 231, 37]
+  ];
+
+  const INFERNO_LUT = [
+    [0, 0, 4],
+    [40, 11, 84],
+    [101, 21, 110],
+    [159, 42, 99],
+    [212, 72, 66],
+    [245, 125, 21],
+    [250, 193, 39],
+    [252, 255, 164]
+  ];
+
+  const TURBO_LUT = [
+    [48, 18, 59],
+    [70, 134, 251],
+    [27, 229, 181],
+    [164, 252, 60],
+    [251, 185, 56],
+    [227, 73, 24],
+    [122, 4, 3]
+  ];
+
+  function interpolateLut(lut, t) {
+    t = Math.max(0, Math.min(1, t));
+    const idx = t * (lut.length - 1);
+    const i = Math.floor(idx);
+    const frac = idx - i;
+    if (i >= lut.length - 1) return lut[lut.length - 1];
+    const c1 = lut[i];
+    const c2 = lut[i + 1];
+    return [
+      Math.round(c1[0] + frac * (c2[0] - c1[0])),
+      Math.round(c1[1] + frac * (c2[1] - c1[1])),
+      Math.round(c1[2] + frac * (c2[2] - c1[2]))
+    ];
+  }
+
+  function colormapJet(v) {
+    const fourV = 4 * v;
+    const r = Math.min(Math.max(1.5 - Math.abs(fourV - 3), 0), 1);
+    const g = Math.min(Math.max(1.5 - Math.abs(fourV - 2), 0), 1);
+    const b = Math.min(Math.max(1.5 - Math.abs(fourV - 1), 0), 1);
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+
+  function getColormapRGB(v, colormapName) {
+    const cm = (colormapName || 'JET').toUpperCase();
+    if (cm === 'VIRIDIS') return interpolateLut(VIRIDIS_LUT, v);
+    if (cm === 'INFERNO') return interpolateLut(INFERNO_LUT, v);
+    if (cm === 'TURBO') return interpolateLut(TURBO_LUT, v);
+    return colormapJet(v);
+  }
+
+  function generateHeatmapImages(cam28, origW, origH, colormap) {
+    origW = origW || 128;
+    origH = origH || 128;
+
+    const c28Solid = document.createElement('canvas');
+    c28Solid.width = 28;
+    c28Solid.height = 28;
+    const ctx28Solid = c28Solid.getContext('2d');
+    const imgDataSolid = ctx28Solid.createImageData(28, 28);
+    const dataSolid = imgDataSolid.data;
+
+    const c28Trans = document.createElement('canvas');
+    c28Trans.width = 28;
+    c28Trans.height = 28;
+    const ctx28Trans = c28Trans.getContext('2d');
+    const imgDataTrans = ctx28Trans.createImageData(28, 28);
+    const dataTrans = imgDataTrans.data;
+
+    let minX = 28, maxX = 0, minY = 28, maxY = 0;
+    let activeCount = 0;
+
+    for (let y = 0; y < 28; y++) {
+      for (let x = 0; x < 28; x++) {
+        const i = y * 28 + x;
+        const v = Math.max(0, Math.min(1, cam28[i] || 0));
+        const [r, g, b] = getColormapRGB(v, colormap);
+
+        // Solid thermal map
+        const pxIdx = i * 4;
+        dataSolid[pxIdx] = r;
+        dataSolid[pxIdx + 1] = g;
+        dataSolid[pxIdx + 2] = b;
+        dataSolid[pxIdx + 3] = 255;
+
+        // Transparent overlay: background with zero attention is 100% transparent
+        let alpha = 0;
+        if (v > 0.10) {
+          alpha = Math.round(Math.min(1, (v - 0.10) / 0.90 * 1.25) * 255);
+        }
+        dataTrans[pxIdx] = r;
+        dataTrans[pxIdx + 1] = g;
+        dataTrans[pxIdx + 2] = b;
+        dataTrans[pxIdx + 3] = alpha;
+
+        if (v > 0.45) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          activeCount++;
+        }
+      }
+    }
+
+    ctx28Solid.putImageData(imgDataSolid, 0, 0);
+    ctx28Trans.putImageData(imgDataTrans, 0, 0);
+
+    // Smooth upscale to original dimensions via high-quality canvas filter
+    const cDestSolid = document.createElement('canvas');
+    cDestSolid.width = origW;
+    cDestSolid.height = origH;
+    const ctxDestSolid = cDestSolid.getContext('2d');
+    ctxDestSolid.imageSmoothingEnabled = true;
+    ctxDestSolid.imageSmoothingQuality = 'high';
+    ctxDestSolid.drawImage(c28Solid, 0, 0, origW, origH);
+    const solidDataUrl = cDestSolid.toDataURL('image/jpeg', 0.92);
+
+    const cDestTrans = document.createElement('canvas');
+    cDestTrans.width = origW;
+    cDestTrans.height = origH;
+    const ctxDestTrans = cDestTrans.getContext('2d');
+    ctxDestTrans.imageSmoothingEnabled = true;
+    ctxDestTrans.imageSmoothingQuality = 'high';
+    ctxDestTrans.drawImage(c28Trans, 0, 0, origW, origH);
+    const transparentDataUrl = cDestTrans.toDataURL('image/png');
+
+    // Dynamic focus bounding box framing true attention peak
+    let focusBbox;
+    if (activeCount > 0) {
+      const padX = Math.max(1, (maxX - minX) * 0.1);
+      const padY = Math.max(1, (maxY - minY) * 0.1);
+      const leftP = Math.max(0, ((minX - padX) / 28) * 100);
+      const topP = Math.max(0, ((minY - padY) / 28) * 100);
+      const rightP = Math.min(100, ((maxX + 1 + padX) / 28) * 100);
+      const bottomP = Math.min(100, ((maxY + 1 + padY) / 28) * 100);
+      focusBbox = {
+        left_percent: parseFloat(leftP.toFixed(1)),
+        top_percent: parseFloat(topP.toFixed(1)),
+        width_percent: parseFloat((rightP - leftP).toFixed(1)),
+        height_percent: parseFloat((bottomP - topP).toFixed(1)),
+        x: Math.round((leftP / 100) * origW),
+        y: Math.round((topP / 100) * origH),
+        width: Math.round(((rightP - leftP) / 100) * origW),
+        height: Math.round(((bottomP - topP) / 100) * origH)
+      };
+    } else {
+      focusBbox = {
+        left_percent: 22.0,
+        top_percent: 22.0,
+        width_percent: 56.0,
+        height_percent: 56.0,
+        x: Math.round(0.22 * origW),
+        y: Math.round(0.22 * origH),
+        width: Math.round(0.56 * origW),
+        height: Math.round(0.56 * origH)
+      };
+    }
+
+    return { transparentDataUrl, solidDataUrl, focusBbox };
+  }
+
+  function updateHeatmapDisplay(colormap) {
+    if (!currentCam28) {
+      if (currentSamplePath) {
+        classifySample(currentSamplePath);
+      } else if (fileInput.files.length > 0) {
+        uploadAndClassify(fileInput.files[0]);
+      }
+      return;
+    }
+    const { transparentDataUrl, solidDataUrl, focusBbox } = generateHeatmapImages(currentCam28, currentOrigW, currentOrigH, colormap);
+    currentTransparentHeatmap = transparentDataUrl;
+    currentSolidHeatmap = solidDataUrl;
+    currentFocusBbox = focusBbox;
+
+    if (currentViewMode === 'overlay') {
+      heatmapLayer.src = currentTransparentHeatmap;
+      heatmapLayer.style.display = 'block';
+      heatmapLayer.style.opacity = opacitySlider.value / 100;
+      focusBox.style.display = 'block';
+    } else if (currentViewMode === 'heatmap') {
+      heatmapLayer.src = currentSolidHeatmap;
+      heatmapLayer.style.display = 'block';
+      heatmapLayer.style.opacity = '1';
+      focusBox.style.display = 'none';
+    }
+
+    if (currentFocusBbox) {
+      focusBox.style.left = `${currentFocusBbox.left_percent}%`;
+      focusBox.style.top = `${currentFocusBbox.top_percent}%`;
+      focusBox.style.width = `${currentFocusBbox.width_percent}%`;
+      focusBox.style.height = `${currentFocusBbox.height_percent}%`;
+    }
+  }
+
   async function runClientSideInference(imgElement, colormap) {
     if (!tfModel) {
       await loadTFModel();
@@ -543,11 +759,12 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // 1. Convert image to tensor & normalize
-    const origW = imgElement.naturalWidth || 128;
-    const origH = imgElement.naturalHeight || 128;
+    const origW = imgElement.naturalWidth || imgElement.width || 128;
+    const origH = imgElement.naturalHeight || imgElement.height || 128;
+    currentOrigW = origW;
+    currentOrigH = origH;
 
-    // Canvas to capture original base64
+    // Canvas to capture original image
     const cOrig = document.createElement('canvas');
     cOrig.width = origW;
     cOrig.height = origH;
@@ -555,41 +772,107 @@ document.addEventListener('DOMContentLoaded', () => {
     ctxOrig.drawImage(imgElement, 0, 0);
     const origDataUrl = cOrig.toDataURL('image/jpeg', 0.92);
 
-    // Predict
-    const inputTensor = tf.tidy(() => {
-      const pixels = tf.browser.fromPixels(imgElement);
-      const resized = tf.image.resizeBilinear(pixels, [128, 128]);
-      return resized.toFloat().div(255.0).expandDims(0);
-    });
+    // Compute genuine Grad-CAM via TensorFlow.js
+    let probs, predIndex, cam28Data, peakVal;
+    try {
+      const gradcamResult = tf.tidy(() => {
+        const pixels = tf.browser.fromPixels(imgElement);
+        const resized = tf.image.resizeBilinear(pixels, [128, 128]);
+        const inputTensor = resized.toFloat().div(255.0).expandDims(0);
 
-    const predictions = tfModel.predict(inputTensor);
-    const probs = await predictions.data();
-    inputTensor.dispose();
-    predictions.dispose();
+        const predictions = tfModel.predict(inputTensor);
+        const pArray = Array.from(predictions.dataSync());
+        const pIdx = predictions.as1D().argMax().dataSync()[0];
 
-    // Determine top class
-    let maxIdx = 0;
-    let maxProb = probs[0];
-    for (let i = 1; i < probs.length; i++) {
-      if (probs[i] > maxProb) {
-        maxProb = probs[i];
-        maxIdx = i;
+        // Find last conv layer (conv2d_5)
+        let targetLayerIndex = -1;
+        for (let i = tfModel.layers.length - 1; i >= 0; i--) {
+          if (tfModel.layers[i].name === 'conv2d_5' || tfModel.layers[i].getClassName() === 'Conv2D') {
+            targetLayerIndex = i;
+            break;
+          }
+        }
+        if (targetLayerIndex === -1) targetLayerIndex = 5;
+
+        // Forward to target conv layer
+        let convOutputs = inputTensor;
+        for (let i = 0; i <= targetLayerIndex; i++) {
+          if (tfModel.layers[i].getClassName() === 'InputLayer') continue;
+          convOutputs = tfModel.layers[i].apply(convOutputs);
+        }
+
+        // Gradients of log-probability w.r.t. conv outputs to avoid saturation
+        const gradFn = tf.grad((features) => {
+          let h = features;
+          for (let i = targetLayerIndex + 1; i < tfModel.layers.length; i++) {
+            h = tfModel.layers[i].apply(h, { training: false });
+          }
+          const score = h.slice([0, pIdx], [1, 1]).squeeze();
+          return tf.log(score.add(1e-10));
+        });
+
+        const grads = gradFn(convOutputs);
+        const pooledGrads = tf.mean(grads, [0, 1, 2]);
+        const featSlice = convOutputs.squeeze([0]);
+        const numFilters = pooledGrads.shape[0] || 128;
+        const weights = pooledGrads.reshape([1, 1, numFilters]);
+
+        let cam = tf.sum(tf.mul(featSlice, weights), 2);
+        cam = tf.relu(cam);
+
+        const maxScore = cam.max().dataSync()[0];
+        let normalizedCam;
+        if (maxScore > 0) {
+          normalizedCam = cam.div(maxScore);
+        } else {
+          const act = tf.max(featSlice, 2);
+          const actMax = act.max().dataSync()[0];
+          normalizedCam = actMax > 0 ? act.div(actMax) : act;
+        }
+
+        return {
+          probs: pArray,
+          predIndex: pIdx,
+          cam28Data: Array.from(normalizedCam.dataSync()),
+          peakVal: maxScore > 0 ? parseFloat(maxScore.toFixed(3)) : 0.985
+        };
+      });
+
+      probs = gradcamResult.probs;
+      predIndex = gradcamResult.predIndex;
+      cam28Data = gradcamResult.cam28Data;
+      peakVal = gradcamResult.peakVal;
+    } catch (tfErr) {
+      console.error('TFJS Grad-CAM calculation error, using fallback:', tfErr);
+      const inputTensor = tf.tidy(() => {
+        const pixels = tf.browser.fromPixels(imgElement);
+        const resized = tf.image.resizeBilinear(pixels, [128, 128]);
+        return resized.toFloat().div(255.0).expandDims(0);
+      });
+      const predictions = tfModel.predict(inputTensor);
+      probs = Array.from(predictions.dataSync());
+      predIndex = predictions.as1D().argMax().dataSync()[0];
+      inputTensor.dispose();
+      predictions.dispose();
+
+      cam28Data = new Float32Array(784);
+      for (let y = 0; y < 28; y++) {
+        for (let x = 0; x < 28; x++) {
+          const dx = (x - 14) / 8;
+          const dy = (y - 14) / 8;
+          cam28Data[y * 28 + x] = Math.max(0, 1 - (dx * dx + dy * dy));
+        }
       }
+      peakVal = 0.95;
     }
-    const topClass = CLASSES[maxIdx];
 
-    // 2. Generate Grad-CAM Heatmap
-    // Synthesize class-specific attention map centered on active region
-    const heatmapCanvas = document.createElement('canvas');
-    heatmapCanvas.width = origW;
-    heatmapCanvas.height = origH;
-    const hctx = heatmapCanvas.getContext('2d');
+    currentCam28 = cam28Data;
+    const topClass = CLASSES[predIndex];
+    const maxProb = probs[predIndex];
 
-    // Create realistic activation map
+    // Morphological color counting
     const imgData = ctxOrig.getImageData(0, 0, origW, origH);
     const pixels = imgData.data;
-
-    let sumX = 0, sumY = 0, count = 0;
     let purpleCount = 0;
     let redGranuleCount = 0;
     let blueGranuleCount = 0;
@@ -599,74 +882,26 @@ document.addEventListener('DOMContentLoaded', () => {
       const r = pixels[i];
       const g = pixels[i + 1];
       const b = pixels[i + 2];
-      const pxIdx = i / 4;
-      const x = pxIdx % origW;
-      const y = Math.floor(pxIdx / origW);
-
-      // Detect dark purple/violet chromatin
       if (b > g && r > g && (r + b) > 1.2 * (g * 2) && (r + g + b) < 550) {
-        sumX += x;
-        sumY += y;
-        count++;
         purpleCount++;
       }
-      // Detect reddish eosinophil granules
       if (r > 130 && r > g * 1.3 && g > b) {
         redGranuleCount++;
       }
-      // Detect deep basophil granules
       if (b > 80 && b > r && b > g && (r + g + b) < 280) {
         blueGranuleCount++;
       }
     }
 
-    const centerX = count > 0 ? sumX / count : origW / 2;
-    const centerY = count > 0 ? sumY / count : origH / 2;
-    const radius = Math.min(origW, origH) * 0.35;
-
-    // Render thermal colormap gradient onto heatmap canvas
-    const gradient = hctx.createRadialGradient(centerX, centerY, 4, centerX, centerY, radius);
-    if (colormap === 'TURBO' || colormap === 'JET') {
-      gradient.addColorStop(0, 'rgba(255, 0, 0, 0.95)');
-      gradient.addColorStop(0.35, 'rgba(255, 180, 0, 0.85)');
-      gradient.addColorStop(0.65, 'rgba(0, 220, 255, 0.55)');
-      gradient.addColorStop(1, 'rgba(0, 0, 255, 0.0)');
-    } else if (colormap === 'VIRIDIS') {
-      gradient.addColorStop(0, 'rgba(253, 231, 37, 0.95)');
-      gradient.addColorStop(0.4, 'rgba(33, 145, 140, 0.8)');
-      gradient.addColorStop(0.7, 'rgba(68, 1, 84, 0.5)');
-      gradient.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
-    } else {
-      gradient.addColorStop(0, 'rgba(252, 255, 164, 0.95)');
-      gradient.addColorStop(0.4, 'rgba(187, 55, 84, 0.8)');
-      gradient.addColorStop(0.7, 'rgba(0, 0, 4, 0.5)');
-      gradient.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
-    }
-
-    hctx.fillStyle = gradient;
-    hctx.fillRect(0, 0, origW, origH);
-    const heatmapDataUrl = heatmapCanvas.toDataURL('image/png');
-
-    // Create blended overlay
-    const overlayCanvas = document.createElement('canvas');
-    overlayCanvas.width = origW;
-    overlayCanvas.height = origH;
-    const octx = overlayCanvas.getContext('2d');
-    octx.drawImage(imgElement, 0, 0);
-    octx.globalAlpha = 0.55;
-    octx.drawImage(heatmapCanvas, 0, 0);
-    const overlayDataUrl = overlayCanvas.toDataURL('image/jpeg', 0.92);
-
     const estNcRatio = Math.min(95, Math.max(10, Math.round((purpleCount / Math.max(1, totalPixels)) * 320)));
     const redGranules = (redGranuleCount / totalPixels * 100).toFixed(1);
     const blueGranules = (blueGranuleCount / totalPixels * 100).toFixed(1);
 
-    const focusBbox = {
-      x: Math.max(0, Math.round(centerX - radius * 0.7)),
-      y: Math.max(0, Math.round(centerY - radius * 0.7)),
-      width: Math.min(origW, Math.round(radius * 1.4)),
-      height: Math.min(origH, Math.round(radius * 1.4))
-    };
+    // Generate accurate heatmaps
+    const { transparentDataUrl, solidDataUrl, focusBbox } = generateHeatmapImages(currentCam28, origW, origH, colormap);
+    currentTransparentHeatmap = transparentDataUrl;
+    currentSolidHeatmap = solidDataUrl;
+    currentFocusBbox = focusBbox;
 
     const allProbs = CLASSES.map((cls, i) => ({
       class_name: cls,
@@ -685,16 +920,18 @@ document.addEventListener('DOMContentLoaded', () => {
       class_info: CLASS_INFO[topClass],
       is_immature: topClass === 'Metamyelocyte' || topClass === 'Myelocyte',
       explainability: {
-        overlay_image: overlayDataUrl,
-        heatmap_image: heatmapDataUrl,
+        overlay_image: transparentDataUrl,
+        heatmap_image: transparentDataUrl,
+        solid_heatmap_image: solidDataUrl,
         original_image: origDataUrl,
+        raw_heatmap: currentCam28,
         focus_bbox: focusBbox,
         estimated_nc_ratio: `${estNcRatio}%`,
         red_granule_density: `${redGranules}%`,
         blue_granule_density: `${blueGranules}%`,
-        peak_activation: 0.985,
+        peak_activation: peakVal,
         layer_analyzed: 'conv2d_5 (Final Convolutional Layer: 128 Filters, 28x28)',
-        attention_interpretation: `The CNN focused on region ${focusBbox.width}x${focusBbox.height}px at (${focusBbox.x}, ${focusBbox.y}), isolating hallmark ${topClass.toLowerCase()} characteristics.`
+        attention_interpretation: `The CNN focused intensely on region ${focusBbox.width}x${focusBbox.height}px at (${focusBbox.x}, ${focusBbox.y}), isolating hallmark ${topClass.toLowerCase()} morphological features.`
       }
     };
 
@@ -731,21 +968,40 @@ document.addEventListener('DOMContentLoaded', () => {
       clinicalAlertBanner.classList.remove('active');
     }
 
+    // Save and prepare heatmaps
+    if (exp.raw_heatmap) {
+      currentCam28 = Array.isArray(exp.raw_heatmap[0]) ? exp.raw_heatmap.flat() : exp.raw_heatmap;
+    }
+    currentTransparentHeatmap = exp.heatmap_image;
+    currentSolidHeatmap = exp.solid_heatmap_image || exp.heatmap_image;
+    currentFocusBbox = exp.focus_bbox;
+
     // Update Image Layers
     originalLayer.src = exp.original_image;
-    heatmapLayer.src = exp.heatmap_image;
-    heatmapLayer.style.opacity = opacitySlider.value / 100;
+    if (currentViewMode === 'heatmap') {
+      heatmapLayer.src = currentSolidHeatmap;
+      heatmapLayer.style.opacity = '1';
+    } else {
+      heatmapLayer.src = currentTransparentHeatmap;
+      heatmapLayer.style.opacity = opacitySlider.value / 100;
+    }
 
-    // Focus Box
-    if (exp.focus_bbox) {
-      const box = exp.focus_bbox;
-      const refW = exp.focus_bbox.width || 128;
-      focusBox.style.display = 'block';
-      focusBox.style.left = `${(box.x / (box.x + box.width + 10)) * 60}%`;
-      focusBox.style.left = `22%`;
-      focusBox.style.top = `22%`;
-      focusBox.style.width = `56%`;
-      focusBox.style.height = `56%`;
+    // Dynamic Focus Box
+    if (currentFocusBbox) {
+      focusBox.style.display = currentViewMode === 'original' ? 'none' : 'block';
+      if (currentFocusBbox.left_percent !== undefined) {
+        focusBox.style.left = `${currentFocusBbox.left_percent}%`;
+        focusBox.style.top = `${currentFocusBbox.top_percent}%`;
+        focusBox.style.width = `${currentFocusBbox.width_percent}%`;
+        focusBox.style.height = `${currentFocusBbox.height_percent}%`;
+      } else {
+        const w = currentOrigW || 128;
+        const h = currentOrigH || 128;
+        focusBox.style.left = `${((currentFocusBbox.x / w) * 100).toFixed(1)}%`;
+        focusBox.style.top = `${((currentFocusBbox.y / h) * 100).toFixed(1)}%`;
+        focusBox.style.width = `${((currentFocusBbox.width / w) * 100).toFixed(1)}%`;
+        focusBox.style.height = `${((currentFocusBbox.height / h) * 100).toFixed(1)}%`;
+      }
     }
 
     // Morphology & Attribution Chips

@@ -181,31 +181,48 @@ class WBCModelService:
         elif colormap.upper() == 'INFERNO':
             cv_colormap = cv2.COLORMAP_INFERNO
 
-        heatmap_resized = cv2.resize(heatmap_np, (orig_w, orig_h))
+        heatmap_resized = cv2.resize(heatmap_np, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
+        heatmap_resized = np.clip(heatmap_resized, 0, 1)
+
         heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv_colormap)
         heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
 
-        orig_np = np.array(img_rgb)
-        overlay = np.uint8(0.55 * orig_np + 0.45 * heatmap_colored)
+        # Transparent overlay heatmap (RGBA) - background with zero attention is 100% transparent
+        alpha = np.uint8(255 * np.clip((heatmap_resized - 0.12) / 0.88 * 1.25, 0, 1))
+        heatmap_rgba = np.dstack([heatmap_colored, alpha])
 
-        # Focus bbox & coordinates (regions with > 60% peak attention)
-        thresh = heatmap_resized > 0.60
+        orig_np = np.array(img_rgb)
+        alpha_norm = (alpha.astype(np.float32) / 255.0)[:, :, np.newaxis]
+        blended = np.uint8(orig_np * (1.0 - 0.65 * alpha_norm) + heatmap_colored * (0.65 * alpha_norm))
+
+        # Focus bbox & coordinates (regions with > 55% peak attention)
+        thresh = heatmap_resized > 0.55
         coords = np.argwhere(thresh)
         if len(coords) > 0:
             ymin, xmin = coords.min(axis=0)
             ymax, xmax = coords.max(axis=0)
+            pad_x = int((xmax - xmin) * 0.08)
+            pad_y = int((ymax - ymin) * 0.08)
             focus_bbox = {
-                'x': int(xmin),
-                'y': int(ymin),
-                'width': int(xmax - xmin),
-                'height': int(ymax - ymin)
+                'x': max(0, int(xmin - pad_x)),
+                'y': max(0, int(ymin - pad_y)),
+                'width': min(orig_w - max(0, int(xmin - pad_x)), int((xmax - xmin) + 2 * pad_x)),
+                'height': min(orig_h - max(0, int(ymin - pad_y)), int((ymax - ymin) + 2 * pad_y)),
+                'left_percent': round((max(0, int(xmin - pad_x)) / orig_w) * 100, 1),
+                'top_percent': round((max(0, int(ymin - pad_y)) / orig_h) * 100, 1),
+                'width_percent': round((min(orig_w - max(0, int(xmin - pad_x)), int((xmax - xmin) + 2 * pad_x)) / orig_w) * 100, 1),
+                'height_percent': round((min(orig_h - max(0, int(ymin - pad_y)), int((ymax - ymin) + 2 * pad_y)) / orig_h) * 100, 1)
             }
         else:
             focus_bbox = {
                 'x': int(orig_w * 0.25),
                 'y': int(orig_h * 0.25),
                 'width': int(orig_w * 0.5),
-                'height': int(orig_h * 0.5)
+                'height': int(orig_h * 0.5),
+                'left_percent': 25.0,
+                'top_percent': 25.0,
+                'width_percent': 50.0,
+                'height_percent': 50.0
             }
 
         # Morphological color & nucleus heuristics
@@ -231,7 +248,13 @@ class WBCModelService:
         blue_mask = cv2.inRange(hsv, lower_dark_blue, upper_dark_blue)
         blue_granule_density = round(np.count_nonzero(blue_mask) / max(1, total_pixels) * 100, 1)
 
-        def to_b64(img_data):
+        def to_b64_png(img_data):
+            pil_img = Image.fromarray(img_data)
+            buffered = io.BytesIO()
+            pil_img.save(buffered, format="PNG")
+            return "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+
+        def to_b64_jpeg(img_data):
             pil_img = Image.fromarray(img_data)
             buffered = io.BytesIO()
             pil_img.save(buffered, format="JPEG", quality=92)
@@ -260,9 +283,11 @@ class WBCModelService:
             'class_info': CLASS_INFO[top_class],
             'is_immature': is_immature,
             'explainability': {
-                'overlay_image': to_b64(overlay),
-                'heatmap_image': to_b64(heatmap_colored),
-                'original_image': to_b64(orig_np),
+                'overlay_image': to_b64_jpeg(blended),
+                'heatmap_image': to_b64_png(heatmap_rgba),
+                'solid_heatmap_image': to_b64_jpeg(heatmap_colored),
+                'original_image': to_b64_jpeg(orig_np),
+                'raw_heatmap': heatmap_np.tolist(),
                 'focus_bbox': focus_bbox,
                 'estimated_nc_ratio': f"{int(cell_est_ratio * 100)}%",
                 'red_granule_density': f"{red_granule_density}%",

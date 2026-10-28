@@ -673,8 +673,9 @@ body::before {
 
 .viewer-canvas-wrap .heatmap-layer {
   opacity: 0.65;
-  transition: opacity 0.1s ease;
-  mix-blend-mode: screen;
+  transition: opacity 0.15s ease;
+  mix-blend-mode: normal;
+  pointer-events: none;
 }
 
 /* Interactive Focus Box */
